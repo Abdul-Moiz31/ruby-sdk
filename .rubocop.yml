@@ -1,0 +1,31 @@
+AllCops:
+  TargetRubyVersion: 3.0
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "bin/**/*"
+    - "vendor/**/*"
+
+Style/Documentation:
+  Enabled: false
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Metrics/MethodLength:
+  Max: 25
+
+Metrics/ClassLength:
+  Max: 150
+
+Metrics/AbcSize:
+  Max: 25
+
+Metrics/ParameterLists:
+  # Keyword args are self-documenting at the call site; don't penalize a
+  # wide options surface the way positional args would be.
+  CountKeywordArgs: false
+
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*"
