@@ -3,6 +3,7 @@
 require "net/http"
 require "uri"
 require "json"
+require "time"
 
 require_relative "errors"
 
@@ -73,7 +74,7 @@ module Infisical
         response = perform(method, uri, body)
         handle_response(response, method: method, uri: uri)
       rescue *RETRYABLE_EXCEPTIONS => e
-        raise RequestError.new("request to #{uri} failed: #{e.message}", cause: e) if attempt >= @max_retries
+        raise RequestError, "request to #{uri} failed: #{e.message}" if attempt >= @max_retries
 
         attempt += 1
         wait_before_retry(attempt)
@@ -82,7 +83,7 @@ module Infisical
         raise e.api_error if attempt >= @max_retries
 
         attempt += 1
-        wait_before_retry(attempt)
+        wait_before_retry(attempt, override: e.retry_after)
         retry
       end
     end
@@ -126,10 +127,30 @@ module Infisical
 
     def handle_response(response, method:, uri:)
       status = response.code.to_i
-      raise RetryableAPIError, build_api_error(response, status, method, uri) if status == 429
+      if status == 429
+        raise RetryableAPIError.new(build_api_error(response, status, method, uri),
+                                    retry_after: parse_retry_after(response["Retry-After"]))
+      end
       raise build_api_error(response, status, method, uri) unless (200..299).cover?(status)
 
       parse_body(response.body)
+    end
+
+    # Retry-After is usually an integer/float number of seconds, but per
+    # RFC 9110 it may also be an HTTP-date.
+    def parse_retry_after(value)
+      return nil if value.nil? || value.empty?
+
+      begin
+        Float(value)
+      rescue ArgumentError, TypeError
+        begin
+          seconds = Time.httpdate(value) - Time.now
+          seconds.positive? ? seconds : nil
+        rescue ArgumentError
+          nil
+        end
+      end
     end
 
     def build_api_error(response, status, method, uri)
@@ -153,19 +174,27 @@ module Infisical
       raw
     end
 
-    def wait_before_retry(attempt)
+    def wait_before_retry(attempt, override: nil)
+      if override
+        @sleeper.call(override)
+        return
+      end
+
       base = self.class.backoff_delay(attempt - 1, initial_delay: @initial_delay, backoff_factor: @backoff_factor)
       jitter = base * JITTER_RATIO * ((rand * 2) - 1)
       @sleeper.call(base + jitter)
     end
 
     # Internal-only signal so 429s share the same retry path as network
-    # errors without retrying every other 4xx/5xx status.
+    # errors without retrying every other 4xx/5xx status. Carries the
+    # server's Retry-After hint (if any) so the wait honors it instead of
+    # our own computed backoff.
     class RetryableAPIError < StandardError
-      attr_reader :api_error
+      attr_reader :api_error, :retry_after
 
-      def initialize(api_error)
+      def initialize(api_error, retry_after: nil)
         @api_error = api_error
+        @retry_after = retry_after
         super(api_error.message)
       end
     end

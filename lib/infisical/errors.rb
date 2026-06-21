@@ -22,11 +22,8 @@ module Infisical
   end
 
   # Raised when the request itself fails (network/timeout) before a
-  # response is received.
-  class RequestError < Error
-    def initialize(message, cause: nil)
-      super(message)
-      @cause = cause if cause
-    end
-  end
+  # response is received. Always raised from inside a `rescue` for the
+  # underlying network exception, so Ruby's built-in `Exception#cause`
+  # already carries it through — no need to track it ourselves.
+  class RequestError < Error; end
 end

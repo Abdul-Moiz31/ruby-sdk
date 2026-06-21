@@ -35,6 +35,16 @@ RSpec.describe Infisical::Secrets do
       expect(secret.secret_key).to eq("FOO")
       expect(secret.secret_value).to eq("bar")
     end
+
+    it "URL-encodes secret names containing reserved characters" do
+      stub = stub_request(:get, "#{base_url}/api/v3/secrets/raw/FOO%2FBAR")
+             .with(query: hash_including("workspaceId" => "proj-1"))
+             .to_return(status: 200, body: { secret: { id: "1", secretKey: "FOO/BAR" } }.to_json)
+
+      secrets.get("FOO/BAR", project_id: "proj-1", environment: "dev")
+
+      expect(stub).to have_been_requested
+    end
   end
 
   describe "#create" do
@@ -70,6 +80,11 @@ RSpec.describe Infisical::Secrets do
       secrets.update("FOO", project_id: "proj-1", environment: "dev", new_secret_name: "BAR")
 
       expect(stub).to have_been_requested
+    end
+
+    it "raises ArgumentError when neither secret_value nor new_secret_name is given" do
+      expect { secrets.update("FOO", project_id: "proj-1", environment: "dev") }
+        .to raise_error(ArgumentError, /requires at least one of/)
     end
   end
 

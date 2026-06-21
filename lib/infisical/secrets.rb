@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "uri"
+
 require_relative "models/secret"
 
 module Infisical
@@ -31,7 +33,7 @@ module Infisical
     def get(secret_name, project_id:, environment:, secret_path: "/",
             expand_secret_references: true, include_imports: false)
       response = @http_client.get(
-        "#{BASE_PATH}/#{secret_name}",
+        secret_path_for(secret_name),
         params: {
           workspaceId: project_id,
           environment: environment,
@@ -46,7 +48,7 @@ module Infisical
 
     def create(secret_name, secret_value, project_id:, environment:, secret_path: "/", secret_comment: nil)
       response = @http_client.post(
-        "#{BASE_PATH}/#{secret_name}",
+        secret_path_for(secret_name),
         body: {
           workspaceId: project_id,
           environment: environment,
@@ -60,8 +62,12 @@ module Infisical
     end
 
     def update(secret_name, project_id:, environment:, secret_value: nil, new_secret_name: nil, secret_path: "/")
+      if secret_value.nil? && new_secret_name.nil?
+        raise ArgumentError, "update requires at least one of secret_value: or new_secret_name:"
+      end
+
       response = @http_client.patch(
-        "#{BASE_PATH}/#{secret_name}",
+        secret_path_for(secret_name),
         body: {
           workspaceId: project_id,
           environment: environment,
@@ -76,7 +82,7 @@ module Infisical
 
     def delete(secret_name, project_id:, environment:, secret_path: "/")
       response = @http_client.delete(
-        "#{BASE_PATH}/#{secret_name}",
+        secret_path_for(secret_name),
         body: {
           workspaceId: project_id,
           environment: environment,
@@ -85,6 +91,15 @@ module Infisical
       )
 
       Models::Secret.from_api(response["secret"])
+    end
+
+    private
+
+    # Escapes a secret name for safe use as a single URI path segment, so
+    # names containing "/", "?", "#", or "%" can't be misread as path
+    # separators or query-string tokens.
+    def secret_path_for(secret_name)
+      "#{BASE_PATH}/#{URI::DEFAULT_PARSER.escape(secret_name.to_s, /[^A-Za-z0-9\-._~]/)}"
     end
   end
 end

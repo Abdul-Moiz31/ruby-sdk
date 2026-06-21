@@ -64,6 +64,20 @@ RSpec.describe Infisical::HTTPClient do
       expect(stub).to have_been_requested.times(2)
     end
 
+    it "honors a Retry-After header instead of computing its own backoff" do
+      waits = []
+      patient_client = described_class.new(base_url: base_url, max_retries: 1, sleeper: lambda { |seconds|
+        waits << seconds
+      })
+      stub_request(:get, url).to_return(
+        { status: 429, body: '{"message":"rate limited"}', headers: { "Retry-After" => "5" } },
+        { status: 200, body: '{"secrets":[]}' }
+      )
+
+      expect(patient_client.get("api/v3/secrets/raw")).to eq({ "secrets" => [] })
+      expect(waits).to eq([5.0])
+    end
+
     it "raises Infisical::APIError after exhausting retries on persistent 429s" do
       stub = stub_request(:get, url).to_return(status: 429, body: '{"message":"rate limited"}')
 
