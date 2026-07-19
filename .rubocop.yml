@@ -9,6 +9,12 @@ AllCops:
 Style/Documentation:
   Enabled: false
 
+Naming/FileName:
+  Exclude:
+    # Deliberately dashed: it must match the gem name so Bundler.require
+    # (`gem "infisical-sdk"`) resolves without a `require:` override.
+    - "lib/infisical-sdk.rb"
+
 Style/StringLiterals:
   EnforcedStyle: double_quotes
 
