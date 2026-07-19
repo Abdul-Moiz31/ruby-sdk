@@ -6,9 +6,14 @@
 /pkg/
 /spec/reports/
 /spec/examples.txt
+/.rspec_status
 /test/tmp/
 /test/version_tmp/
 /tmp/
+
+# Library gem: let each environment (and each CI matrix entry) resolve its
+# own compatible dependency set rather than pinning one.
+/Gemfile.lock
 
 # Used by dotenv library to load environment variables.
 # .env
