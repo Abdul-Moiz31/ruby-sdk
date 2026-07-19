@@ -17,7 +17,7 @@ module Infisical
     attr_reader :url
 
     # @return [String] uppercase HTTP method of the failed request, e.g. "GET"
-    attr_reader :method
+    attr_reader :http_method
 
     # @return [String, nil] server-assigned request id, when the response carried one
     attr_reader :request_id
@@ -42,15 +42,15 @@ module Infisical
     # @param message [String] human-readable error detail from the API
     # @param status [Integer] HTTP status code
     # @param url [String] full URL the request was sent to
-    # @param method [String] HTTP method of the request
+    # @param http_method [String] HTTP method of the request
     # @param request_id [String, nil] server-assigned request id, if any
-    def initialize(message, status:, url:, method:, request_id: nil)
+    def initialize(message, status:, url:, http_method:, request_id: nil)
       @status = status
       @url = url
-      @method = method
+      @http_method = http_method
       @request_id = request_id
 
-      context = "[Method=#{method}] [URL=#{url}] [StatusCode=#{status}]"
+      context = "[Method=#{http_method}] [URL=#{url}] [StatusCode=#{status}]"
       context += " [RequestId=#{request_id}]" if request_id
 
       super("#{context} #{message}")

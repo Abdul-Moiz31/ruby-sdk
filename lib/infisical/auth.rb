@@ -25,9 +25,12 @@ module Infisical
     #   this client
     # @raise [AuthenticationError] if the credentials are rejected
     def universal_auth_login(client_id:, client_secret:)
+      # auth: false keeps any previously stored (possibly expired) bearer
+      # token off the login request; the API breaks on stale tokens there.
       response = @http_client.post(
         UNIVERSAL_AUTH_LOGIN_PATH,
-        body: { clientId: client_id, clientSecret: client_secret }
+        body: { clientId: client_id, clientSecret: client_secret },
+        auth: false
       )
 
       access_token(response["accessToken"])

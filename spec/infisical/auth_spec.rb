@@ -23,6 +23,17 @@ RSpec.describe Infisical::Auth do
       expect(credential.token_type).to eq("Bearer")
     end
 
+    it "does not send a previously stored (possibly expired) bearer token" do
+      http_client.access_token = "stale-token"
+      stub = stub_request(:post, "#{base_url}/api/v1/auth/universal-auth/login")
+             .with { |request| request.headers["Authorization"].nil? }
+             .to_return(status: 200, body: '{"accessToken":"tok-new"}')
+
+      auth.universal_auth_login(client_id: "id-1", client_secret: "secret-1")
+
+      expect(stub).to have_been_requested
+    end
+
     it "authenticates the shared HTTP client so subsequent requests carry the token" do
       stub_request(:post, "#{base_url}/api/v1/auth/universal-auth/login")
         .to_return(status: 200, body: '{"accessToken":"tok-abc"}')

@@ -13,6 +13,16 @@ RSpec.describe Infisical::HTTPClient do
       expect(client.get("api/v3/secrets/raw")).to eq({ "secrets" => [] })
     end
 
+    it "identifies itself with the SDK User-Agent" do
+      stub = stub_request(:get, url)
+             .with(headers: { "User-Agent" => "infisical-ruby-sdk/v#{Infisical::VERSION}" })
+             .to_return(status: 200, body: "{}")
+
+      client.get("api/v3/secrets/raw")
+
+      expect(stub).to have_been_requested
+    end
+
     it "attaches the bearer token once access_token is set" do
       client.access_token = "tok-123"
       stub = stub_request(:get, url).with(headers: { "Authorization" => "Bearer tok-123" })
@@ -39,7 +49,7 @@ RSpec.describe Infisical::HTTPClient do
 
       expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::NotFoundError) do |error|
         expect(error.status).to eq(404)
-        expect(error.method).to eq("GET")
+        expect(error.http_method).to eq("GET")
         expect(error.url).to eq(url)
         expect(error.request_id).to eq("req-abc123")
         expect(error.message).to include("secret not found")

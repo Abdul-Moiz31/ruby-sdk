@@ -8,7 +8,7 @@ require_relative "secrets"
 
 module Infisical
   # Entry point for the SDK. Construct one, authenticate via {#auth}, then
-  # use {#secrets} (and future resource clients) to talk to Infisical.
+  # use {#secrets} to talk to Infisical.
   #
   # @example Fetch a secret
   #   client = Infisical::Client.new
@@ -20,12 +20,13 @@ module Infisical
     ALLOWED_SCHEMES = %w[http https].freeze
 
     # @param site_url [String] base URL of the Infisical instance; defaults to
-    #   Infisical Cloud, so only self-hosted deployments need to set it
+    #   Infisical Cloud, so only self-hosted deployments need to set it. A
+    #   trailing "/api" is tolerated and stripped.
     # @param timeout [Numeric] open/read timeout in seconds for each request
     # @raise [ArgumentError] if site_url is not an http(s) URL
     def initialize(site_url: DEFAULT_SITE_URL, timeout: HTTPClient::DEFAULT_TIMEOUT)
       validate_site_url!(site_url)
-      @http_client = HTTPClient.new(base_url: site_url, timeout: timeout)
+      @http_client = HTTPClient.new(base_url: normalize_site_url(site_url), timeout: timeout)
     end
 
     # Authentication operations. Logging in through this authenticates the
@@ -44,6 +45,15 @@ module Infisical
     end
 
     private
+
+    # Users coming from other Infisical SDKs are used to passing the site
+    # URL with an "/api" suffix; the SDK adds that segment itself, so strip
+    # it (and any trailing slashes) rather than requesting ".../api/api/...".
+    def normalize_site_url(site_url)
+      url = site_url.dup
+      url.chomp!("/") while url.end_with?("/")
+      url.delete_suffix("/api")
+    end
 
     def validate_site_url!(site_url)
       uri = URI.parse(site_url)

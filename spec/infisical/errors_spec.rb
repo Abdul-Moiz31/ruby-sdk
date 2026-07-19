@@ -22,7 +22,7 @@ RSpec.describe Infisical::APIError do
   end
 
   it "lets every status-specific error be rescued as APIError and Infisical::Error" do
-    error = Infisical::NotFoundError.new("nope", status: 404, url: "https://x", method: "GET")
+    error = Infisical::NotFoundError.new("nope", status: 404, url: "https://x", http_method: "GET")
 
     expect(error).to be_a(described_class)
     expect(error).to be_a(Infisical::Error)

@@ -27,10 +27,13 @@ module Infisical
     # @param skip_unique_validation [Boolean] in recursive mode, duplicate keys
     #   across folders are collapsed to one secret per key (last occurrence
     #   wins) unless this is true, in which case all of them are kept
+    # @param attach_to_process_env [Boolean] export each fetched secret into
+    #   the process environment (ENV), without overriding variables that are
+    #   already set
     # @return [Array<Models::Secret>]
     # @raise [APIError] if the API rejects the request
     def list(project_id:, environment:, secret_path: "/", include_imports: true, recursive: false,
-             skip_unique_validation: false)
+             skip_unique_validation: false, attach_to_process_env: false)
       response = @http_client.get(
         BASE_PATH,
         params: {
@@ -45,7 +48,9 @@ module Infisical
       secrets = Array(response["secrets"]).map { |secret| Models::Secret.from_api(secret) }
       secrets = ensure_unique_secrets_by_key(secrets, skip_unique_validation) if recursive
       secrets = merge_imported_secrets(secrets, response["imports"]) if include_imports
-      secrets.sort_by(&:secret_key)
+      secrets = secrets.sort_by(&:secret_key)
+      attach_to_env(secrets) if attach_to_process_env
+      secrets
     end
 
     # Fetches a single secret by name.
@@ -80,9 +85,12 @@ module Infisical
     # @param environment [String] environment slug, e.g. "dev"
     # @param secret_path [String] folder path to create the secret at
     # @param secret_comment [String, nil] optional comment stored with the secret
+    # @param skip_multiline_encoding [Boolean, nil] disable the API's encoding
+    #   of multi-line values; omitted from the request when nil
     # @return [Models::Secret] the created secret
     # @raise [APIError] if the API rejects the request, e.g. the name is taken
-    def create(secret_name, secret_value, project_id:, environment:, secret_path: "/", secret_comment: nil)
+    def create(secret_name, secret_value, project_id:, environment:, secret_path: "/", secret_comment: nil,
+               skip_multiline_encoding: nil)
       response = @http_client.post(
         secret_path_for(secret_name),
         body: {
@@ -90,7 +98,8 @@ module Infisical
           environment: environment,
           secretPath: secret_path,
           secretValue: secret_value,
-          secretComment: secret_comment
+          secretComment: secret_comment,
+          skipMultilineEncoding: skip_multiline_encoding
         }.compact
       )
 
@@ -105,10 +114,13 @@ module Infisical
     # @param secret_value [String, nil] new value, if changing it
     # @param new_secret_name [String, nil] new key, if renaming
     # @param secret_path [String] folder path the secret lives at
+    # @param skip_multiline_encoding [Boolean, nil] disable the API's encoding
+    #   of multi-line values; omitted from the request when nil
     # @return [Models::Secret] the updated secret
     # @raise [ArgumentError] if neither secret_value nor new_secret_name is given
     # @raise [NotFoundError] if no such secret exists
-    def update(secret_name, project_id:, environment:, secret_value: nil, new_secret_name: nil, secret_path: "/")
+    def update(secret_name, project_id:, environment:, secret_value: nil, new_secret_name: nil, secret_path: "/",
+               skip_multiline_encoding: nil)
       if secret_value.nil? && new_secret_name.nil?
         raise ArgumentError, "update requires at least one of secret_value: or new_secret_name:"
       end
@@ -120,7 +132,8 @@ module Infisical
           environment: environment,
           secretPath: secret_path,
           secretValue: secret_value,
-          newSecretName: new_secret_name
+          newSecretName: new_secret_name,
+          skipMultilineEncoding: skip_multiline_encoding
         }.compact
       )
 
@@ -179,6 +192,15 @@ module Infisical
       end
 
       merged
+    end
+
+    # Exports secrets into the process environment. A variable that already
+    # has a non-empty value is left untouched; an empty value counts as
+    # unset, matching the Go SDK.
+    def attach_to_env(secrets)
+      secrets.each do |secret|
+        ENV[secret.secret_key] = secret.secret_value if ENV[secret.secret_key].to_s.empty?
+      end
     end
 
     # Escapes a secret name for safe use as a single URI path segment, so

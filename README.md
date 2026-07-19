@@ -63,17 +63,29 @@ client.secrets.list(project_id: "...", environment: "dev", secret_path: "/")
 # secret per key unless skip_unique_validation: true is passed.
 client.secrets.list(project_id: "...", environment: "dev", recursive: true)
 
+# Export fetched secrets into the process environment (never overrides
+# variables that already have a value):
+client.secrets.list(project_id: "...", environment: "dev", attach_to_process_env: true)
+ENV.fetch("DATABASE_URL")
+
 client.secrets.get("DATABASE_URL", project_id: "...", environment: "dev")
 client.secrets.create("DATABASE_URL", "postgres://...", project_id: "...", environment: "dev")
 client.secrets.update("DATABASE_URL", project_id: "...", environment: "dev", secret_value: "postgres://...")
 client.secrets.delete("DATABASE_URL", project_id: "...", environment: "dev")
+
+# create and update accept skip_multiline_encoding: true to disable the
+# API's encoding of multi-line values.
 ```
+
+Each returned secret exposes `secret_key`, `secret_value`, `secret_comment`,
+`secret_path`, `version`, `metadata` (an array of key/value entries), and
+`tags` (an array with `id`, `slug`, `name`, and `color`).
 
 ### Error handling
 
 Every error raised by the SDK inherits from `Infisical::Error`. API failures
-raise `Infisical::APIError` (with `status`, `url`, `method`, and `request_id`
-readers), and well-known statuses raise a dedicated subclass:
+raise `Infisical::APIError` (with `status`, `url`, `http_method`, and
+`request_id` readers), and well-known statuses raise a dedicated subclass:
 
 ```ruby
 begin
@@ -83,7 +95,7 @@ rescue Infisical::NotFoundError        # 404
 rescue Infisical::AuthenticationError  # 401: bad or expired credentials
   # re-authenticate
 rescue Infisical::APIError => e        # anything else the API rejected
-  # e.status, e.url, e.method, e.request_id
+  # e.status, e.url, e.http_method, e.request_id
 end
 ```
 
@@ -97,6 +109,9 @@ connection resets) raise `Infisical::RequestError` after retries.
 ```ruby
 client = Infisical::Client.new(site_url: "https://your-infisical-instance.com")
 ```
+
+A trailing `/api` on the site URL (as used with some other Infisical SDKs) is
+accepted and normalized away.
 
 ## Documentation
 

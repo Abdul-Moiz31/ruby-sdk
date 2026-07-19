@@ -6,6 +6,7 @@ require "json"
 require "time"
 
 require_relative "errors"
+require_relative "version"
 
 module Infisical
   # Thin wrapper around Net::HTTP that knows how to talk to the Infisical
@@ -14,6 +15,8 @@ module Infisical
   #
   # @api private Internal plumbing; use {Client} instead.
   class HTTPClient
+    USER_AGENT = "infisical-ruby-sdk/v#{VERSION}".freeze
+
     DEFAULT_TIMEOUT = 10 # seconds
     DEFAULT_MAX_RETRIES = 4
     DEFAULT_INITIAL_DELAY = 1.0 # seconds
@@ -48,8 +51,10 @@ module Infisical
       request(:get, path, params: params)
     end
 
-    def post(path, body: nil, params: {})
-      request(:post, path, body: body, params: params)
+    # auth: false sends the request without the stored access token, for
+    # endpoints like login where a stale bearer token must not be attached.
+    def post(path, body: nil, params: {}, auth: true)
+      request(:post, path, body: body, params: params, auth: auth)
     end
 
     def patch(path, body: nil, params: {})
@@ -68,12 +73,12 @@ module Infisical
 
     private
 
-    def request(method, path, body: nil, params: {})
+    def request(method, path, body: nil, params: {}, auth: true)
       uri = build_uri(path, params)
 
       attempt = 0
       begin
-        response = perform(method, uri, body)
+        response = perform(method, uri, body, auth)
         handle_response(response, method: method, uri: uri)
       rescue *RETRYABLE_EXCEPTIONS => e
         raise RequestError, "request to #{uri} failed: #{e.message}" if attempt >= @max_retries
@@ -97,17 +102,17 @@ module Infisical
       uri
     end
 
-    def perform(method, uri, body)
+    def perform(method, uri, body, auth)
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
       http.open_timeout = @timeout
       http.read_timeout = @timeout
 
-      request = build_request(method, uri, body)
+      request = build_request(method, uri, body, auth)
       http.request(request)
     end
 
-    def build_request(method, uri, body)
+    def build_request(method, uri, body, auth)
       request_class = {
         get: Net::HTTP::Get,
         post: Net::HTTP::Post,
@@ -117,7 +122,8 @@ module Infisical
 
       request = request_class.new(uri)
       request["Accept"] = "application/json"
-      request["Authorization"] = "Bearer #{@access_token}" if @access_token
+      request["User-Agent"] = USER_AGENT
+      request["Authorization"] = "Bearer #{@access_token}" if auth && @access_token
 
       unless body.nil?
         request["Content-Type"] = "application/json"
@@ -164,7 +170,7 @@ module Infisical
         message.to_s,
         status: status,
         url: uri.to_s,
-        method: method.to_s.upcase,
+        http_method: method.to_s.upcase,
         request_id: data["reqId"]
       )
     end
