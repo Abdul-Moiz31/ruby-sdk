@@ -52,6 +52,12 @@ client.auth.access_token("existing-access-token")
 
 ```ruby
 client.secrets.list(project_id: "...", environment: "dev", secret_path: "/")
+
+# Imported secrets are folded in by default; pass include_imports: false to
+# opt out. Recursive mode collapses duplicate keys across folders to one
+# secret per key unless skip_unique_validation: true is passed.
+client.secrets.list(project_id: "...", environment: "dev", recursive: true)
+
 client.secrets.get("DATABASE_URL", project_id: "...", environment: "dev")
 client.secrets.create("DATABASE_URL", "postgres://...", project_id: "...", environment: "dev")
 client.secrets.update("DATABASE_URL", project_id: "...", environment: "dev", secret_value: "postgres://...")

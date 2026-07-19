@@ -5,40 +5,40 @@ require "uri"
 require_relative "models/secret"
 
 module Infisical
-  # CRUD operations against Infisical's raw secrets API.
+  # CRUD operations against Infisical's v4 secrets API.
   class Secrets
-    BASE_PATH = "api/v3/secrets/raw"
+    BASE_PATH = "api/v4/secrets"
 
     def initialize(http_client)
       @http_client = http_client
     end
 
-    def list(project_id:, environment:, secret_path: "/", expand_secret_references: true,
-             include_imports: false, recursive: false)
+    def list(project_id:, environment:, secret_path: "/", include_imports: true, recursive: false,
+             skip_unique_validation: false)
       response = @http_client.get(
         BASE_PATH,
         params: {
-          workspaceId: project_id,
+          projectId: project_id,
           environment: environment,
           secretPath: secret_path,
-          expandSecretReferences: expand_secret_references,
           includeImports: include_imports,
           recursive: recursive
         }
       )
 
-      Array(response["secrets"]).map { |secret| Models::Secret.from_api(secret) }
+      secrets = Array(response["secrets"]).map { |secret| Models::Secret.from_api(secret) }
+      secrets = ensure_unique_secrets_by_key(secrets, skip_unique_validation) if recursive
+      secrets = merge_imported_secrets(secrets, response["imports"]) if include_imports
+      secrets.sort_by(&:secret_key)
     end
 
-    def get(secret_name, project_id:, environment:, secret_path: "/",
-            expand_secret_references: true, include_imports: false)
+    def get(secret_name, project_id:, environment:, secret_path: "/", include_imports: true)
       response = @http_client.get(
         secret_path_for(secret_name),
         params: {
-          workspaceId: project_id,
+          projectId: project_id,
           environment: environment,
           secretPath: secret_path,
-          expandSecretReferences: expand_secret_references,
           includeImports: include_imports
         }
       )
@@ -50,7 +50,7 @@ module Infisical
       response = @http_client.post(
         secret_path_for(secret_name),
         body: {
-          workspaceId: project_id,
+          projectId: project_id,
           environment: environment,
           secretPath: secret_path,
           secretValue: secret_value,
@@ -69,7 +69,7 @@ module Infisical
       response = @http_client.patch(
         secret_path_for(secret_name),
         body: {
-          workspaceId: project_id,
+          projectId: project_id,
           environment: environment,
           secretPath: secret_path,
           secretValue: secret_value,
@@ -84,7 +84,7 @@ module Infisical
       response = @http_client.delete(
         secret_path_for(secret_name),
         body: {
-          workspaceId: project_id,
+          projectId: project_id,
           environment: environment,
           secretPath: secret_path
         }
@@ -94,6 +94,37 @@ module Infisical
     end
 
     private
+
+    # In recursive mode the same key can exist at several paths; collapse to
+    # one secret per key (the last occurrence wins). With
+    # skip_unique_validation, secrets are instead kept unique per
+    # path+key, so same-named secrets at different paths all survive.
+    def ensure_unique_secrets_by_key(secrets, skip_unique_validation)
+      secrets.each_with_object({}) do |secret, by_key|
+        key = skip_unique_validation ? "#{secret.secret_path}:#{secret.secret_key}" : secret.secret_key
+        by_key[key] = secret
+      end.values
+    end
+
+    # Folds secrets from import blocks into the main list. Secrets already
+    # present win over imports, and earlier import blocks win over later
+    # ones.
+    def merge_imported_secrets(secrets, import_blocks)
+      merged = secrets.dup
+      seen = merged.to_h { |secret| [secret.secret_key, true] }
+
+      Array(import_blocks).each do |block|
+        Array(block["secrets"]).each do |data|
+          secret = Models::Secret.from_api(data)
+          next if seen[secret.secret_key]
+
+          seen[secret.secret_key] = true
+          merged << secret
+        end
+      end
+
+      merged
+    end
 
     # Escapes a secret name for safe use as a single URI path segment, so
     # names containing "/", "?", "#", or "%" can't be misread as path

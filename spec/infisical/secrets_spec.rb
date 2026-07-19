@@ -5,29 +5,100 @@ RSpec.describe Infisical::Secrets do
   let(:http_client) { Infisical::HTTPClient.new(base_url: base_url, sleeper: ->(_seconds) {}) }
   let(:secrets) { described_class.new(http_client) }
 
+  def secret_payload(key, value: "v", path: "/")
+    { id: key.downcase, secretKey: key, secretValue: value, secretPath: path, version: 1, type: "shared" }
+  end
+
   describe "#list" do
-    it "lists secrets for a project/environment" do
-      stub_request(:get, "#{base_url}/api/v3/secrets/raw")
-        .with(query: hash_including("workspaceId" => "proj-1", "environment" => "dev"))
+    it "lists secrets for a project/environment, sorted by key" do
+      stub_request(:get, "#{base_url}/api/v4/secrets")
+        .with(query: hash_including("projectId" => "proj-1", "environment" => "dev",
+                                    "includeImports" => "true", "recursive" => "false"))
         .to_return(
           status: 200,
-          body: { secrets: [{ id: "1", workspace: "proj-1", environment: "dev", secretKey: "FOO",
-                              secretValue: "bar", secretPath: "/", version: 1, type: "shared" }] }.to_json
+          body: { secrets: [secret_payload("FOO", value: "bar"), secret_payload("BAR")] }.to_json
         )
 
       result = secrets.list(project_id: "proj-1", environment: "dev")
 
-      expect(result.size).to eq(1)
-      expect(result.first).to be_a(Infisical::Models::Secret)
-      expect(result.first.secret_key).to eq("FOO")
-      expect(result.first.secret_value).to eq("bar")
+      expect(result.map(&:secret_key)).to eq(%w[BAR FOO])
+      expect(result).to all(be_a(Infisical::Models::Secret))
+      expect(result.last.secret_value).to eq("bar")
+    end
+
+    it "does not send expandSecretReferences (the v4 API defaults it to true)" do
+      stub = stub_request(:get, "#{base_url}/api/v4/secrets")
+             .with(query: hash_excluding("expandSecretReferences"))
+             .to_return(status: 200, body: { secrets: [] }.to_json)
+
+      secrets.list(project_id: "proj-1", environment: "dev")
+
+      expect(stub).to have_been_requested
+    end
+
+    context "when recursive" do
+      it "collapses duplicate keys from different paths, keeping the last occurrence" do
+        stub_request(:get, "#{base_url}/api/v4/secrets")
+          .with(query: hash_including("recursive" => "true"))
+          .to_return(
+            status: 200,
+            body: { secrets: [secret_payload("FOO", value: "root", path: "/"),
+                              secret_payload("FOO", value: "nested", path: "/app"),
+                              secret_payload("BAR")] }.to_json
+          )
+
+        result = secrets.list(project_id: "proj-1", environment: "dev", recursive: true)
+
+        expect(result.map(&:secret_key)).to eq(%w[BAR FOO])
+        expect(result.last.secret_value).to eq("nested")
+      end
+
+      it "keeps same-named secrets from different paths with skip_unique_validation" do
+        stub_request(:get, "#{base_url}/api/v4/secrets")
+          .with(query: hash_including("recursive" => "true"))
+          .to_return(
+            status: 200,
+            body: { secrets: [secret_payload("FOO", value: "root", path: "/"),
+                              secret_payload("FOO", value: "nested", path: "/app")] }.to_json
+          )
+
+        result = secrets.list(project_id: "proj-1", environment: "dev",
+                              recursive: true, skip_unique_validation: true)
+
+        expect(result.map(&:secret_value)).to contain_exactly("root", "nested")
+      end
+    end
+
+    context "when include_imports" do
+      it "appends imported secrets, with direct secrets taking precedence on key conflicts" do
+        stub_request(:get, "#{base_url}/api/v4/secrets")
+          .with(query: hash_including("includeImports" => "true"))
+          .to_return(
+            status: 200,
+            body: {
+              secrets: [secret_payload("FOO", value: "direct")],
+              imports: [
+                { secretPath: "/shared", environment: "dev",
+                  secrets: [secret_payload("FOO", value: "imported"), secret_payload("DB_URL")] },
+                { secretPath: "/other", environment: "dev",
+                  secrets: [secret_payload("DB_URL", value: "later-import")] }
+              ]
+            }.to_json
+          )
+
+        result = secrets.list(project_id: "proj-1", environment: "dev", include_imports: true)
+
+        expect(result.map(&:secret_key)).to eq(%w[DB_URL FOO])
+        expect(result.find { |s| s.secret_key == "FOO" }.secret_value).to eq("direct")
+        expect(result.find { |s| s.secret_key == "DB_URL" }.secret_value).to eq("v")
+      end
     end
   end
 
   describe "#get" do
     it "fetches a single secret by name" do
-      stub_request(:get, "#{base_url}/api/v3/secrets/raw/FOO")
-        .with(query: hash_including("workspaceId" => "proj-1", "environment" => "dev"))
+      stub_request(:get, "#{base_url}/api/v4/secrets/FOO")
+        .with(query: hash_including("projectId" => "proj-1", "environment" => "dev"))
         .to_return(status: 200, body: { secret: { id: "1", secretKey: "FOO", secretValue: "bar" } }.to_json)
 
       secret = secrets.get("FOO", project_id: "proj-1", environment: "dev")
@@ -37,8 +108,8 @@ RSpec.describe Infisical::Secrets do
     end
 
     it "URL-encodes secret names containing reserved characters" do
-      stub = stub_request(:get, "#{base_url}/api/v3/secrets/raw/FOO%2FBAR")
-             .with(query: hash_including("workspaceId" => "proj-1"))
+      stub = stub_request(:get, "#{base_url}/api/v4/secrets/FOO%2FBAR")
+             .with(query: hash_including("projectId" => "proj-1"))
              .to_return(status: 200, body: { secret: { id: "1", secretKey: "FOO/BAR" } }.to_json)
 
       secrets.get("FOO/BAR", project_id: "proj-1", environment: "dev")
@@ -49,8 +120,8 @@ RSpec.describe Infisical::Secrets do
 
   describe "#create" do
     it "creates a secret with the given value" do
-      stub = stub_request(:post, "#{base_url}/api/v3/secrets/raw/FOO")
-             .with(body: hash_including("workspaceId" => "proj-1", "environment" => "dev", "secretValue" => "bar"))
+      stub = stub_request(:post, "#{base_url}/api/v4/secrets/FOO")
+             .with(body: hash_including("projectId" => "proj-1", "environment" => "dev", "secretValue" => "bar"))
              .to_return(status: 200, body: { secret: { id: "1", secretKey: "FOO", secretValue: "bar" } }.to_json)
 
       secret = secrets.create("FOO", "bar", project_id: "proj-1", environment: "dev")
@@ -62,8 +133,8 @@ RSpec.describe Infisical::Secrets do
 
   describe "#update" do
     it "updates a secret's value" do
-      stub = stub_request(:patch, "#{base_url}/api/v3/secrets/raw/FOO")
-             .with(body: hash_including("secretValue" => "new-val"))
+      stub = stub_request(:patch, "#{base_url}/api/v4/secrets/FOO")
+             .with(body: hash_including("projectId" => "proj-1", "secretValue" => "new-val"))
              .to_return(status: 200, body: { secret: { id: "1", secretKey: "FOO", secretValue: "new-val" } }.to_json)
 
       secret = secrets.update("FOO", project_id: "proj-1", environment: "dev", secret_value: "new-val")
@@ -73,7 +144,7 @@ RSpec.describe Infisical::Secrets do
     end
 
     it "supports renaming via new_secret_name" do
-      stub = stub_request(:patch, "#{base_url}/api/v3/secrets/raw/FOO")
+      stub = stub_request(:patch, "#{base_url}/api/v4/secrets/FOO")
              .with(body: hash_including("newSecretName" => "BAR"))
              .to_return(status: 200, body: { secret: { id: "1", secretKey: "BAR" } }.to_json)
 
@@ -90,8 +161,8 @@ RSpec.describe Infisical::Secrets do
 
   describe "#delete" do
     it "deletes a secret by name" do
-      stub = stub_request(:delete, "#{base_url}/api/v3/secrets/raw/FOO")
-             .with(body: hash_including("workspaceId" => "proj-1", "environment" => "dev"))
+      stub = stub_request(:delete, "#{base_url}/api/v4/secrets/FOO")
+             .with(body: hash_including("projectId" => "proj-1", "environment" => "dev"))
              .to_return(status: 200, body: { secret: { id: "1", secretKey: "FOO" } }.to_json)
 
       secret = secrets.delete("FOO", project_id: "proj-1", environment: "dev")
