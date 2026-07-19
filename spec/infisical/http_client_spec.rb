@@ -34,21 +34,37 @@ RSpec.describe Infisical::HTTPClient do
   end
 
   describe "error handling" do
-    it "raises Infisical::APIError with status/url/method context on a non-2xx, non-429 response" do
-      stub_request(:get, url).to_return(status: 404, body: '{"message":"secret not found"}')
+    it "raises a status-specific APIError subclass with status/url/method/reqId context" do
+      stub_request(:get, url).to_return(status: 404, body: '{"reqId":"req-abc123","message":"secret not found"}')
 
-      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::APIError) do |error|
+      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::NotFoundError) do |error|
         expect(error.status).to eq(404)
         expect(error.method).to eq("GET")
         expect(error.url).to eq(url)
+        expect(error.request_id).to eq("req-abc123")
         expect(error.message).to include("secret not found")
+        expect(error.message).to include("req-abc123")
       end
+    end
+
+    it "leaves request_id nil when the error body has no reqId" do
+      stub_request(:get, url).to_return(status: 404, body: '{"message":"secret not found"}')
+
+      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::NotFoundError) do |error|
+        expect(error.request_id).to be_nil
+      end
+    end
+
+    it "raises Infisical::AuthenticationError on 401" do
+      stub_request(:get, url).to_return(status: 401, body: '{"message":"token expired"}')
+
+      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::AuthenticationError)
     end
 
     it "does not retry non-429 error responses" do
       stub = stub_request(:get, url).to_return(status: 500, body: '{"message":"boom"}')
 
-      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::APIError)
+      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::ServerError)
       expect(stub).to have_been_requested.times(1)
     end
   end
@@ -78,10 +94,10 @@ RSpec.describe Infisical::HTTPClient do
       expect(waits).to eq([5.0])
     end
 
-    it "raises Infisical::APIError after exhausting retries on persistent 429s" do
+    it "raises Infisical::RateLimitError after exhausting retries on persistent 429s" do
       stub = stub_request(:get, url).to_return(status: 429, body: '{"message":"rate limited"}')
 
-      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::APIError) do |error|
+      expect { client.get("api/v3/secrets/raw") }.to raise_error(Infisical::RateLimitError) do |error|
         expect(error.status).to eq(429)
       end
       expect(stub).to have_been_requested.times(3) # 1 initial + 2 retries

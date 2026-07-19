@@ -11,6 +11,8 @@ module Infisical
   # Thin wrapper around Net::HTTP that knows how to talk to the Infisical
   # API: bearer token auth, JSON (de)serialization, and retrying transient
   # failures with exponential backoff + jitter.
+  #
+  # @api private Internal plumbing; use {Client} instead.
   class HTTPClient
     DEFAULT_TIMEOUT = 10 # seconds
     DEFAULT_MAX_RETRIES = 4
@@ -155,14 +157,15 @@ module Infisical
 
     def build_api_error(response, status, method, uri)
       data = parse_body(response.body)
-      message = data.is_a?(Hash) ? (data["message"] || data["error"] || response.body) : response.body
+      data = {} unless data.is_a?(Hash)
+      message = data["message"] || data["error"] || response.body
 
-      APIError.new(
+      APIError.for_status(status).new(
         message.to_s,
         status: status,
         url: uri.to_s,
         method: method.to_s.upcase,
-        request_id: response["x-request-id"]
+        request_id: data["reqId"]
       )
     end
 

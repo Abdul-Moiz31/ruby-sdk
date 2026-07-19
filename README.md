@@ -41,8 +41,13 @@ secrets.each { |secret| puts "#{secret.secret_key}=#{secret.secret_value}" }
 ### Authentication
 
 ```ruby
-# Universal Auth (machine identity client id/secret)
-client.auth.universal_auth_login(client_id: "...", client_secret: "...")
+# Universal Auth (machine identity client id/secret). Returns the full
+# credential, so you can build your own token refresh on top of it.
+credential = client.auth.universal_auth_login(client_id: "...", client_secret: "...")
+credential.access_token       # the token this client now uses
+credential.expires_in         # seconds until it expires
+credential.access_token_max_ttl
+credential.token_type         # "Bearer"
 
 # Or use a token you already have
 client.auth.access_token("existing-access-token")
@@ -63,6 +68,29 @@ client.secrets.create("DATABASE_URL", "postgres://...", project_id: "...", envir
 client.secrets.update("DATABASE_URL", project_id: "...", environment: "dev", secret_value: "postgres://...")
 client.secrets.delete("DATABASE_URL", project_id: "...", environment: "dev")
 ```
+
+### Error handling
+
+Every error raised by the SDK inherits from `Infisical::Error`. API failures
+raise `Infisical::APIError` (with `status`, `url`, `method`, and `request_id`
+readers), and well-known statuses raise a dedicated subclass:
+
+```ruby
+begin
+  client.secrets.get("DATABASE_URL", project_id: "...", environment: "dev")
+rescue Infisical::NotFoundError        # 404
+  # secret does not exist
+rescue Infisical::AuthenticationError  # 401: bad or expired credentials
+  # re-authenticate
+rescue Infisical::APIError => e        # anything else the API rejected
+  # e.status, e.url, e.method, e.request_id
+end
+```
+
+Also available: `Infisical::PermissionError` (403), `Infisical::RateLimitError`
+(429, raised only after automatic retries are exhausted), and
+`Infisical::ServerError` (5xx). Network-level failures (timeouts, DNS,
+connection resets) raise `Infisical::RequestError` after retries.
 
 ### Self-hosted instances
 
